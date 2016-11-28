@@ -26,7 +26,7 @@ import numpy as np
 from numpy import array, dot, ones, sqrt
 from scipy.linalg import pinv
 from numpy.random import rand
-from .core import nvecs, norm
+from .core import nvecs, norm, khatrirao
 from .ktensor import ktensor
 
 _log = logging.getLogger('CP')
@@ -35,9 +35,14 @@ _DEF_INIT = 'nvecs'
 _DEF_CONV = 1e-5
 _DEF_FIT_METHOD = 'full'
 _DEF_TYPE = np.float
-
+_DEF_TAU     = 10**-04 # cp-apr convergence tolerance on KKT conditions
+_DEF_KAPPA   = 10**-02 # cp-apr inadmissible zero avoidance adjustment
+_DEF_KTOL    = 10**-10 # cp-apr tolerance for identifying potential inadmissible zero
+_DEF_EPSILON = 10**-10 # cp-apr minimum divisor to prevent dividing by zero
+_DEF_INNER_ITER=500    # cp-apr algo: lmax (inner iterations for subproblem)
 __all__ = [
     'als',
+    'apr',
     'opt',
     'wopt'
 ]
@@ -135,6 +140,14 @@ def als(X, rank, **kwargs):
     U = _init(ainit, X, N, rank, dtype)
     fit = 0
     exectimes = []
+    # ALS: http://www.sandia.gov/~tgkolda/pubs/pubfiles/TensorReview.pdf Fig 3.3. Var name correpsondence:
+    # There Here
+    #   N    N
+    #   A    U
+    #   X    X
+    #   V    Y
+
+    # lambda lambda
     for itr in range(maxiter):
         tic = time.clock()
         fitold = fit
@@ -171,6 +184,94 @@ def als(X, rank, **kwargs):
     return P, fit, itr, array(exectimes)
 
 
+def apr(X, rank, **kwargs):
+    """ Implementation of
+        https://arxiv.org/pdf/1112.2414.pdf
+        meant to mimic strucutre of als.
+
+        Initialization is random only: 'init' argument is disallowed.
+    """
+
+    # init options
+    #ainit       = kwargs.pop('init', _DEF_INIT)
+    maxiter     = kwargs.pop('max_iter', _DEF_MAXITER)          # k_max
+    fit_method  = kwargs.pop('fit_method', _DEF_FIT_METHOD)     
+    conv        = kwargs.pop('conv',    _DEF_CONV)                 
+    dtype       = kwargs.pop('dtype',   _DEF_TYPE)
+    tau         = kwargs.pop('tau',     _DEF_TAU)
+    kappa       = kwargs.pop('kappa',   _DEF_KAPPA)
+    ktol        = kwargs.pop('ktol',    _DEF_KTOL)
+    epsilon     = kwargs.pop('epsilon', _DEF_EPSILON)
+    inner_iter  = kwargs.pop('inner_iter',_DEF_INNER_ITER)
+
+    if not len(kwargs) == 0:
+        raise ValueError('Unknown keywords (%s)' % (kwargs.keys()))
+
+    N = X.ndim
+    fit = 0
+    exectimes = []
+
+    # Algo just says initial guess for M
+    lmbda = np.ones(rank, dtype=dtype) 
+    #U = _init(ainit, X, N, rank, dtype)
+    # Initialize U (A in paper) with 
+    U = [np.exp(np.random.randn(_d,rank)) for _d in X.shape]
+    for i in range(len(U)):
+        U[i] = U[i].dot(np.diag(1./U[i].sum(axis=0)))
+        
+    Phi = [np.zeros((_d, rank)) for _d in X.shape]
+
+    for itr in range(maxiter): #al3.1: outer iterations
+        
+        tic = time.clock()
+        fitold = fit
+        isConverged = True
+        for n in range(N):    #al3.3: iterate over modes
+            #the shift to prevent zeros
+            S = kappa * (U[n]<ktol) * (Phi[n]>1) #Phi init'd to 0s so don't check itr
+            # Set shifted and scaled nth component
+            
+            B = (U[n]+S).dot(np.diag(lmbda))
+            # line 6: Get product Pi kr product ( U[N-1] U[N-2] .. U[0])' w/o n 
+            order = list(range(n)) + list(range(n + 1, N))
+            Pi = khatrirao(tuple(U[i] for i in order), reverse=True).T
+
+            # "Subproblem loop" line 7
+            Xn = X.unfold(n) #for speed to avoid repetition in inner loop
+            for l in range(inner_iter):
+                Phi[n] = (Xn / np.maximum(B.dot(Pi), epsilon)).dot(Pi.T) #line 8
+                tstval = np.abs(np.minimum(B, 1. - Phi[n])).max()
+                if tstval < tau:
+                    break;
+                isConverged = False
+                B *= Phi[n]
+            
+            lmbda = B.sum(axis=0) # e' B; normalization here is additive
+            U[n] = B.dot(np.diag(1./lmbda))
+
+        P = ktensor(U, lmbda)
+        # Diagnostics skipped for now; the y 
+        """
+                if fit_method == 'full':
+                    normresidual = normX ** 2 + P.norm() ** 2 - 2 * P.innerprod(X)
+                    fit = 1 - (normresidual / normX ** 2)
+                else:
+                    fit = itr
+                fitchange = abs(fitold - fit)
+        """
+        exectimes.append(time.clock() - tic)
+        """_log.debug(
+            '[%3d] fit: %.5f | delta: %7.1e | secs: %.5f' %
+            (itr, fit, fitchange, exectimes[-1])
+        )
+"""
+
+        if isConverged:
+            break
+
+    return P, fit, itr, array(exectimes)
+        
+
 def opt(X, rank, **kwargs):
     ainit = kwargs.pop('init', _DEF_INIT)
     maxiter = kwargs.pop('maxIter', _DEF_MAXITER)
@@ -195,10 +296,10 @@ def _init(init, X, N, rank, dtype):
     if isinstance(init, list):
         Uinit = init
     elif init == 'random':
-        for n in range(1, N):
+        for n in range(1, N): #what about index 0
             Uinit[n] = array(rand(X.shape[n], rank), dtype=dtype)
     elif init == 'nvecs':
-        for n in range(1, N):
+        for n in range(1, N): #what about index 0
             Uinit[n] = array(nvecs(X, n, rank), dtype=dtype)
     else:
         raise 'Unknown option (init=%s)' % str(init)
