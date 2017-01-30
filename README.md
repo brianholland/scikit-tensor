@@ -1,6 +1,8 @@
 # scikit-tensor
 ![Travis CI](https://travis-ci.org/mnick/scikit-tensor.svg?branch=master)
 
+## Testing Travis CI build
+
 scikit-tensor is a Python module for multilinear algebra and tensor 
 factorizations. Currently, scikit-tensor supports basic tensor operations 
 such as folding/unfolding, tensor-matrix and tensor-vector products as 
