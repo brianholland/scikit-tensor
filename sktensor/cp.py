@@ -35,10 +35,10 @@ _DEF_INIT = 'nvecs'
 _DEF_CONV = 1e-5
 _DEF_FIT_METHOD = 'full'
 _DEF_TYPE = np.float
-_DEF_TAU     = 10**-04 # cp-apr convergence tolerance on KKT conditions
-_DEF_KAPPA   = 10**-02 # cp-apr inadmissible zero avoidance adjustment
-_DEF_KTOL    = 10**-10 # cp-apr tolerance for identifying potential inadmissible zero
-_DEF_EPSILON = 10**-10 # cp-apr minimum divisor to prevent dividing by zero
+_DEF_TAU     = 10**-04. # cp-apr convergence tolerance on KKT conditions
+_DEF_KAPPA   = 10**-02. # cp-apr inadmissible zero avoidance adjustment
+_DEF_KTOL    = 10**-10. # cp-apr tolerance for identifying potential inadmissible zero
+_DEF_EPSILON = 10**-10. # cp-apr minimum divisor to prevent dividing by zero
 _DEF_INNER_ITER=500    # cp-apr algo: lmax (inner iterations for subproblem)
 __all__ = [
     'als',
